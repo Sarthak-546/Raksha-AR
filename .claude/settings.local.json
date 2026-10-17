@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(dir node_modules@mediapipecamera_utils *)"
+    ]
+  }
+}

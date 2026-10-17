@@ -7,7 +7,7 @@ import { LocationSharing } from '../components/location/LocationSharing';
 import { useLanguage } from '../contexts/LanguageContext';
 import { LanguageSwitcher } from '../components/ui/LanguageSwitcher';
 import { Phone } from 'lucide-react';
-import { buildSosSmsUri, openExternal } from '../../services/EmergencyService';
+import { buildSosSmsUri, openExternal } from '../services/EmergencyService';
 
 export const Location = () => {
   const navigate = useNavigate();
