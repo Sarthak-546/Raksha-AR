@@ -201,15 +201,12 @@ export const EmergencyScan = () => {
     return () => window.clearInterval(id);
   }, []);
 
-  // MediaPipe Pose tracking — CPR only
+  // MediaPipe Pose tracking — CPR & Bleeding
   useEffect(() => {
-    if (activeEmergency !== 'cpr') {
+    if (activeEmergency !== 'cpr' && activeEmergency !== 'bleeding') {
       setSternumPoint(null);
       setPoseError(null);
-      // Clear body mask when not in CPR mode (optional, but clean)
-      if (activeEmergency === 'bleeding') {
-        setBodyMask(undefined);
-      }
+      setBodyMask(undefined);
       return;
     }
 
@@ -232,7 +229,7 @@ export const EmergencyScan = () => {
 
       pose.setOptions({
         selfieMode: facingMode === 'user',
-        modelComplexity: 1,
+        modelComplexity: 0,
         smoothLandmarks: true,
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.5,
@@ -243,18 +240,22 @@ export const EmergencyScan = () => {
         const video = videoRef.current;
         const landmarks = results?.poseLandmarks;
 
+        if (!landmarks) {
+          if (activeEmergency === 'cpr') setSternumPoint(null);
+          if (activeEmergency === 'bleeding') setBodyMask(undefined);
+          return;
+        }
+
         // Landmark 11 = left shoulder, landmark 12 = right shoulder (MediaPipe Pose).
-        const left = landmarks?.[11];
-        const right = landmarks?.[12];
+        const left = landmarks[11];
+        const right = landmarks[12];
 
         // Handle bleeding detection torso masking
-        if (activeEmergency === 'bleeding' && landmarks) {
-          // Define key torso and limb landmarks for bounding box
-          // Shoulders: 11 & 12, Elbows: 13 & 14, Wrists: 15 & 16, Hips: 23 & 24
+        if (activeEmergency === 'bleeding') {
           const keyIndices = [11, 12, 13, 14, 15, 16, 23, 24];
           const validPoints = keyIndices
             .map(idx => landmarks[idx])
-            .filter(point => point && point.visibility > 0.5); // Only use confident landmarks
+            .filter(point => point && point.visibility > 0.5);
 
           if (validPoints.length > 0) {
             const xs = validPoints.map(p => p.x);
@@ -265,61 +266,55 @@ export const EmergencyScan = () => {
             const rawMinY = Math.min(...ys);
             const rawMaxY = Math.max(...ys);
 
-            // Expand bounding box by 15% to account for body mass/flesh
             const width = rawMaxX - rawMinX;
             const height = rawMaxY - rawMinY;
             const expandX = width * 0.15;
             const expandY = height * 0.15;
 
-            const maskedMinX = Math.max(0, rawMinX - expandX);
-            const maskedMaxX = Math.min(1, rawMaxX + expandX);
-            const maskedMinY = Math.max(0, rawMinY - expandY);
-            const maskedMaxY = Math.min(1, rawMaxY + expandY);
-
             setBodyMask({
-              minX: maskedMinX,
-              maxX: maskedMaxX,
-              minY: maskedMinY,
-              maxY: maskedMaxY,
+              minX: Math.max(0, rawMinX - expandX),
+              maxX: Math.min(1, rawMaxX + expandX),
+              minY: Math.max(0, rawMinY - expandY),
+              maxY: Math.min(1, rawMaxY + expandY),
             });
           } else {
-            // No confident landmarks detected, scan whole frame
             setBodyMask(undefined);
           }
         }
 
-        if (!video || !left || !right) {
-          setSternumPoint(null);
-          return;
-        }
+        if (activeEmergency === 'cpr') {
+          if (!video || !left || !right) {
+            setSternumPoint(null);
+            return;
+          }
 
-        // Convert both shoulders to true screen pixels FIRST (handles object-cover cropping
-        // and aspect-ratio differences between the video frame and the rendered box), then do
-        // all geometry in pixel space so tall portrait viewports don't distort it.
-        const leftPx = normalizedToPixels(left.x, left.y, video);
-        const rightPx = normalizedToPixels(right.x, right.y, video);
+          // Convert both shoulders to true screen pixels FIRST (handles object-cover cropping
+          // and aspect-ratio differences between the video frame and the rendered box), then do
+          // all geometry in pixel space so tall portrait viewports don't distort it.
+          const leftPx = normalizedToPixels(left.x, left.y, video);
+          const rightPx = normalizedToPixels(right.x, right.y, video);
 
-        const midX = (leftPx.x + rightPx.x) / 2;
-        const midY = (leftPx.y + rightPx.y) / 2;
-        const shoulderWidth = Math.hypot(leftPx.x - rightPx.x, leftPx.y - rightPx.y);
+          const midX = (leftPx.x + rightPx.x) / 2;
+          const midY = (leftPx.y + rightPx.y) / 2;
+          const shoulderWidth = Math.hypot(leftPx.x - rightPx.x, leftPx.y - rightPx.y);
 
-        // Sternum sits a fixed proportion of shoulder width below the shoulder line —
-        // computed entirely in pixel space, so it holds across orientations/aspect ratios.
-        const sternumY = midY + shoulderWidth * 0.28;
+          // Sternum sits a fixed proportion of shoulder width below the shoulder line —
+          // computed entirely in pixel space, so it holds across orientations/aspect ratios.
+          const sternumY = midY + shoulderWidth * 0.28;
 
-        // Performance optimization: Only update state if movement exceeds 3px threshold
-        const newPoint = { x: midX, y: sternumY };
-        const prevPoint = prevSternumPointRef.current;
+          // Performance optimization: Only update state if movement exceeds 3px threshold
+          const newPoint = { x: midX, y: sternumY };
+          const prevPoint = prevSternumPointRef.current;
 
-        if (!prevPoint ||
-            Math.abs(newPoint.x - prevPoint.x) > 3 ||
-            Math.abs(newPoint.y - prevPoint.y) > 3) {
-          prevSternumPointRef.current = newPoint;
-          setSternumPoint(newPoint);
+          if (!prevPoint ||
+              Math.abs(newPoint.x - prevPoint.x) > 3 ||
+              Math.abs(newPoint.y - prevPoint.y) > 3) {
+            prevSternumPointRef.current = newPoint;
+            setSternumPoint(newPoint);
+          }
         }
       });
     } catch (err) {
-      // Removed console.error as per optimization requirements
       setPoseError('Pose tracking failed to start. Follow the voice guidance.');
       return;
     }
@@ -333,7 +328,7 @@ export const EmergencyScan = () => {
         try {
           await pose.send({ image: video });
         } catch (err) {
-          // Removed console.error as per optimization requirements
+          // ignore
         } finally {
           busy = false;
         }
